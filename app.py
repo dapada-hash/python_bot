@@ -41,7 +41,7 @@ API_KEY = (
 TEACHER_PIN = (
     read_secret("TEACHER_PIN")
     or read_env("TEACHER_PIN")
-    or "1234"  # fallback only
+    or "1234"  # change this fallback if you want
 )
 
 # =================================================
@@ -49,12 +49,13 @@ TEACHER_PIN = (
 # =================================================
 MODEL = "gemini-2.5-flash"
 
+# teacher "bulk bank" sizes
 BATCH_SIZE = 200          # 1 call -> 200 questions
 BANK_TARGET = 1000        # button aims to create ~1000 questions
 BANK_CALLS = BANK_TARGET // BATCH_SIZE  # 1000/200 = 5 calls
 
 COOLDOWN_SECONDS = 2
-SCORES_FILE = "scores.csv"
+SCORES_FILE = "scores.csv"  # saved on the server running Streamlit
 
 # =================================================
 # FALLBACK QUESTIONS (offline)
@@ -95,23 +96,18 @@ FALLBACK_QUESTIONS = [
 st.session_state.setdefault("score", 0)
 st.session_state.setdefault("total_answered", 0)
 st.session_state.setdefault("answered", False)
-
-# ✅ CHANGED: multiple queues by (topic, difficulty)
-# Example key: ("18. Construct data structures: ...", "Easy")
-st.session_state.setdefault("queues", {})  # dict[tuple[str,str], list[dict]]
+st.session_state.setdefault("queue", [])
+st.session_state.setdefault("next_allowed_time", 0.0)
 st.session_state.setdefault("gemini_error", "")
 st.session_state.setdefault("question", None)
 st.session_state.setdefault("is_teacher", False)
 
-# ✅ Radio selection storage (blank every new question)
+# ✅ NEW: radio selection storage (ensures blank every new question)
 st.session_state.setdefault("answer_choice", None)
 
 # Student info
 st.session_state.setdefault("student_name", "")
 st.session_state.setdefault("student_period", "Period 1")
-
-# cooldown
-st.session_state.setdefault("next_allowed_time", 0.0)
 
 # =================================================
 # GLOBAL LOCK (safe file writes)
@@ -259,18 +255,11 @@ No extra text before the first QUESTION:
         return [], err
 
 # =================================================
-# QUEUE HELPERS (per-domain)
+# STUDENT-SAFE QUEUE (never calls Gemini automatically)
 # =================================================
-def get_queue(topic: str, difficulty: str):
-    key = (topic, difficulty)
-    if key not in st.session_state.queues:
-        st.session_state.queues[key] = []
-    return st.session_state.queues[key]
-
-def ensure_queue_student_safe(topic: str, difficulty: str):
-    q = get_queue(topic, difficulty)
-    if len(q) == 0:
-        q.append(random.choice(FALLBACK_QUESTIONS))
+def ensure_queue_student_safe():
+    if len(st.session_state.queue) == 0:
+        st.session_state.queue.append(random.choice(FALLBACK_QUESTIONS))
 
 # =================================================
 # SCOREBOARD STORAGE
@@ -347,10 +336,8 @@ topic = st.sidebar.selectbox("Domain", [
 ])
 
 difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"])
-
-selected_queue = get_queue(topic, difficulty)
-st.sidebar.caption(f"Queued for THIS Domain: {len(selected_queue)}")
-st.sidebar.caption(f"Teacher refill: {BATCH_SIZE} (≈{BANK_CALLS} calls for {BANK_TARGET})")
+st.sidebar.caption(f"Queued questions ready: {len(st.session_state.queue)}")
+st.sidebar.caption(f"Teacher refill size: {BATCH_SIZE} (≈{BANK_CALLS} calls for {BANK_TARGET})")
 
 # =================================================
 # SIDEBAR: SCORE + PROGRESS
@@ -383,33 +370,34 @@ with st.sidebar.expander("🔒 Teacher Panel"):
     if st.session_state.is_teacher:
         st.divider()
 
-        if st.button(f"✅ Refill THIS Domain from Gemini (+{BATCH_SIZE})"):
+        if st.button(f"✅ Refill Queue from Gemini (+{BATCH_SIZE})"):
             with st.spinner("Calling Gemini (teacher only)..."):
                 qs, err = fetch_batch_from_gemini(topic, difficulty)
                 if qs:
-                    selected_queue.extend(qs)
-                    st.success(f"Added {len(qs)} questions to {topic} / {difficulty}.")
+                    st.session_state.queue.extend(qs)
+                    st.success(f"Added {len(qs)} questions to the queue.")
                 else:
                     st.warning("Gemini unavailable. Added fallback questions instead.")
-                    selected_queue.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE))
+                    for _ in range(BATCH_SIZE):
+                        st.session_state.queue.append(random.choice(FALLBACK_QUESTIONS))
                     if err:
                         st.caption(err)
 
-        if st.button(f"🚀 Build Daily Bank for THIS Domain (~{BANK_TARGET} questions)"):
+        if st.button(f"🚀 Build Daily Bank (~{BANK_TARGET} questions)"):
             added_total = 0
             with st.spinner(f"Building ~{BANK_TARGET} questions (about {BANK_CALLS} Gemini calls)..."):
                 for _ in range(BANK_CALLS):
                     qs, err = fetch_batch_from_gemini(topic, difficulty)
                     if qs:
-                        selected_queue.extend(qs)
+                        st.session_state.queue.extend(qs)
                         added_total += len(qs)
                     else:
-                        st.warning("Stopped early (Gemini error/quota). Filling remaining with fallback.")
-                        selected_queue.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE))
+                        st.warning("Stopped early (Gemini error/quota). Using fallback for the remaining.")
+                        st.session_state.queue.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE))
                         if err:
                             st.caption(err)
                         break
-            st.success(f"Bank ready ✅ Added {added_total} AI questions to {topic} / {difficulty}.")
+            st.success(f"Daily bank ready ✅ Added {added_total} AI questions to the queue.")
 
         st.divider()
         st.subheader("Teacher Dashboard")
@@ -473,7 +461,7 @@ elif st.session_state.total_answered == 0:
 st.divider()
 
 # =================================================
-# NEXT QUESTION (student-safe, per-domain)
+# NEXT QUESTION (student-safe)
 # =================================================
 now = time.time()
 cooldown = int(max(0, st.session_state.next_allowed_time - now))
@@ -482,14 +470,11 @@ if cooldown > 0:
 
 if st.button("Next Question", disabled=cooldown > 0):
     st.session_state.next_allowed_time = time.time() + COOLDOWN_SECONDS
-
-    ensure_queue_student_safe(topic, difficulty)
-    current_queue = get_queue(topic, difficulty)
-
-    st.session_state.question = current_queue.pop(0)
+    ensure_queue_student_safe()
+    st.session_state.question = st.session_state.queue.pop(0)
     st.session_state.answered = False
 
-    # reset radio selection for every new question
+    # ✅ IMPORTANT: reset radio selection for every new question
     st.session_state.answer_choice = None
 
 # =================================================
@@ -505,13 +490,14 @@ if q:
     st.write(f"**C)** {q['C']}")
     st.write(f"**D)** {q['D']}")
 
-    st.radio(
+    # ✅ UPDATED: always blank because we reset answer_choice above
+    choice = st.radio(
         "Answer",
         ["A", "B", "C", "D"],
         index=None,
         horizontal=True,
         key="answer_choice",
-        disabled=st.session_state.answered
+        disabled=st.session_state.answered  # optional: lock after submit
     )
 
     if st.button("Submit Answer"):
