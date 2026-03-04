@@ -304,10 +304,10 @@ def clear_scores():
 st.sidebar.title("Student Info")
 st.session_state.student_name = st.sidebar.text_input("Your name", value=st.session_state.student_name)
 st.session_state.student_period = st.sidebar.selectbox(
-    "Class / Period",
-    ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"],
-    index=["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"].index(st.session_state.student_period)
-    if st.session_state.student_period in ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"]
+     "Class / Period",
+    ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"],
+    index=["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"].index(st.session_state.student_period)
+    if st.session_state.student_period in ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"]
     else 0
 )
 
@@ -515,4 +515,5 @@ if q:
 
             st.info(q["explanation"])
 else:
+
     st.info("Click **Next Question** to start.")
