@@ -41,21 +41,19 @@ API_KEY = (
 TEACHER_PIN = (
     read_secret("TEACHER_PIN")
     or read_env("TEACHER_PIN")
-    or "1234"  # fallback only
+    or "1234"
 )
 
 # =================================================
 # SETTINGS
 # =================================================
 MODEL = "gemini-2.5-flash"
+BATCH_SIZE = 200
+BANK_TARGET = 1000
+BANK_CALLS = max(1, BANK_TARGET // BATCH_SIZE)
 
-BATCH_SIZE = 200                  # per refill call for selected domain
-BANK_TARGET = 1000                # per bank build for selected domain
-BANK_CALLS = BANK_TARGET // BATCH_SIZE  # 5
-
-# ✅ NEW: "generate for every domain" target
 ALL_DOMAINS_TARGET = 100
-ALL_DOMAINS_BATCH_SIZE = 100      # 1 API call per domain
+ALL_DOMAINS_BATCH_SIZE = 100
 
 COOLDOWN_SECONDS = 2
 SCORES_FILE = "scores.csv"
@@ -94,7 +92,7 @@ FALLBACK_QUESTIONS = [
 ]
 
 # =================================================
-# DOMAINS LIST (for "every domain" generator)
+# DOMAINS
 # =================================================
 DOMAINS = [
     "1. Data Types and Operators",
@@ -118,28 +116,63 @@ DOMAINS = [
 ]
 
 # =================================================
-# SESSION STATE
+# SESSION STATE (PER USER)
 # =================================================
 st.session_state.setdefault("score", 0)
 st.session_state.setdefault("total_answered", 0)
 st.session_state.setdefault("answered", False)
-
-# Per-domain queues: dict[(topic, difficulty)] -> list[question]
-st.session_state.setdefault("queues", {})
-
-st.session_state.setdefault("gemini_error", "")
 st.session_state.setdefault("question", None)
 st.session_state.setdefault("is_teacher", False)
-
-# Radio selection storage (blank each new question)
 st.session_state.setdefault("answer_choice", None)
-
-# Student info
 st.session_state.setdefault("student_name", "")
 st.session_state.setdefault("student_period", "Period 1")
-
-# cooldown
 st.session_state.setdefault("next_allowed_time", 0.0)
+st.session_state.setdefault("gemini_error", "")
+
+# ✅ per-student "seen" tracker so they don't repeat until exhausted
+# dict[(topic, difficulty)] -> set[int] indices they've seen
+st.session_state.setdefault("seen_by_domain", {})
+
+# =================================================
+# SHARED (SERVER-WIDE) BANK — THIS IS THE FIX
+# =================================================
+@st.cache_resource
+def get_shared_bank():
+    # bank[(topic, difficulty)] -> list[question dict]
+    return {
+        "lock": threading.Lock(),
+        "bank": {},
+        "updated": {},  # (topic, difficulty) -> ISO timestamp
+    }
+
+SHARED = get_shared_bank()
+
+def bank_key(topic: str, difficulty: str):
+    return (topic, difficulty)
+
+def get_bank_list(topic: str, difficulty: str):
+    k = bank_key(topic, difficulty)
+    with SHARED["lock"]:
+        if k not in SHARED["bank"]:
+            SHARED["bank"][k] = []
+        return SHARED["bank"][k]
+
+def bank_size(topic: str, difficulty: str) -> int:
+    k = bank_key(topic, difficulty)
+    with SHARED["lock"]:
+        return len(SHARED["bank"].get(k, []))
+
+def bank_last_updated(topic: str, difficulty: str):
+    k = bank_key(topic, difficulty)
+    with SHARED["lock"]:
+        return SHARED["updated"].get(k)
+
+def add_to_bank(topic: str, difficulty: str, questions: list):
+    k = bank_key(topic, difficulty)
+    with SHARED["lock"]:
+        SHARED["bank"].setdefault(k, [])
+        SHARED["bank"][k].extend(questions)
+        SHARED["updated"][k] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 # =================================================
 # GLOBAL LOCK (safe file writes)
@@ -151,7 +184,7 @@ def get_file_lock():
 FILE_LOCK = get_file_lock()
 
 # =================================================
-# HELPERS: Gemini errors
+# GEMINI ERROR CLASSIFIER
 # =================================================
 def classify_gemini_error(msg: str) -> str:
     if "API_KEY_INVALID" in msg or "INVALID_ARGUMENT" in msg:
@@ -168,7 +201,6 @@ def classify_gemini_error(msg: str) -> str:
 def parse_batch(raw: str):
     questions = []
     chunks = raw.split("###")
-
     for chunk in chunks:
         try:
             q = re.search(r"QUESTION:\s*(.*?)(?=\nA\))", chunk, re.S).group(1)
@@ -190,7 +222,6 @@ def parse_batch(raw: str):
             })
         except Exception:
             pass
-
     return questions
 
 # =================================================
@@ -249,10 +280,6 @@ def get_client():
     return genai.Client(api_key=API_KEY)
 
 def fetch_questions_from_gemini(topic: str, difficulty: str, count: int):
-    """
-    Fetch exactly `count` questions for a specific topic/difficulty.
-    Uses the same strict format used by parse_batch().
-    """
     domain_hint = get_domain_hint(topic)
 
     prompt = f"""
@@ -291,21 +318,7 @@ No extra text before the first QUESTION:
         return [], err
 
 # =================================================
-# QUEUE HELPERS (per-domain)
-# =================================================
-def get_queue(topic: str, difficulty: str):
-    key = (topic, difficulty)
-    if key not in st.session_state.queues:
-        st.session_state.queues[key] = []
-    return st.session_state.queues[key]
-
-def ensure_queue_student_safe(topic: str, difficulty: str):
-    q = get_queue(topic, difficulty)
-    if len(q) == 0:
-        q.append(random.choice(FALLBACK_QUESTIONS))
-
-# =================================================
-# SCOREBOARD STORAGE
+# SCORE STORAGE (CSV)
 # =================================================
 def ensure_scores_file():
     if os.path.exists(SCORES_FILE):
@@ -342,15 +355,15 @@ def clear_scores():
         os.remove(SCORES_FILE)
 
 # =================================================
-# SIDEBAR: STUDENT INFO + QUIZ SETTINGS
+# SIDEBAR
 # =================================================
 st.sidebar.title("Student Info")
 st.session_state.student_name = st.sidebar.text_input("Your name", value=st.session_state.student_name)
 st.session_state.student_period = st.sidebar.selectbox(
     "Class / Period",
-    ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"],
-    index=["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"].index(st.session_state.student_period)
-    if st.session_state.student_period in ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Period 7", "Period 8", "Other"]
+    ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"],
+    index=["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"].index(st.session_state.student_period)
+    if st.session_state.student_period in ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"]
     else 0
 )
 
@@ -360,13 +373,14 @@ st.sidebar.title("Quiz Settings")
 topic = st.sidebar.selectbox("Domain", DOMAINS)
 difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"])
 
-selected_queue = get_queue(topic, difficulty)
-st.sidebar.caption(f"Queued for THIS Domain: {len(selected_queue)}")
-st.sidebar.caption(f"Teacher refill: {BATCH_SIZE} • Bank: {BANK_TARGET} for {topic} ({difficulty})")
+size_here = bank_size(topic, difficulty)
+updated_here = bank_last_updated(topic, difficulty)
 
-# =================================================
-# SIDEBAR: SCORE + PROGRESS
-# =================================================
+st.sidebar.caption(f"✅ Shared bank for THIS Domain: {size_here}")
+if updated_here:
+    st.sidebar.caption(f"Last teacher refill (UTC): {updated_here}")
+
+# Progress
 st.sidebar.divider()
 st.sidebar.metric("Score", st.session_state.score)
 answered = st.session_state.total_answered
@@ -395,51 +409,46 @@ with st.sidebar.expander("🔒 Teacher Panel"):
     if st.session_state.is_teacher:
         st.divider()
 
-        # Refill selected domain
         if st.button(f"✅ Refill {topic} ({difficulty}) +{BATCH_SIZE} questions"):
             with st.spinner(f"Calling Gemini for {topic} ({difficulty})..."):
                 qs, err = fetch_questions_from_gemini(topic, difficulty, BATCH_SIZE)
                 if qs:
-                    selected_queue.extend(qs)
-                    st.success(f"Added {len(qs)} questions to {topic} ({difficulty}).")
+                    add_to_bank(topic, difficulty, qs)
+                    st.success(f"Added {len(qs)} to shared bank: {topic} ({difficulty}).")
                 else:
-                    st.warning("Gemini unavailable. Added fallback questions instead.")
-                    selected_queue.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE))
+                    st.warning("Gemini unavailable. Added fallback instead.")
+                    add_to_bank(topic, difficulty, [random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE)])
                     if err:
                         st.caption(err)
 
-        # Build bank for selected domain
-        if st.button(f"🚀 Build {topic} ({difficulty}) bank (~{BANK_TARGET} questions)"):
+        if st.button(f"🚀 Build {topic} ({difficulty}) bank (~{BANK_TARGET})"):
             added_total = 0
-            with st.spinner(f"Building ~{BANK_TARGET} questions for {topic} ({difficulty})..."):
+            with st.spinner(f"Building ~{BANK_TARGET} for {topic} ({difficulty})..."):
                 for _ in range(BANK_CALLS):
                     qs, err = fetch_questions_from_gemini(topic, difficulty, BATCH_SIZE)
                     if qs:
-                        selected_queue.extend(qs)
+                        add_to_bank(topic, difficulty, qs)
                         added_total += len(qs)
                     else:
-                        st.warning("Stopped early (Gemini error/quota). Filling remaining with fallback.")
-                        selected_queue.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE))
+                        st.warning("Stopped early (Gemini error/quota). Filling remainder with fallback.")
+                        add_to_bank(topic, difficulty, [random.choice(FALLBACK_QUESTIONS) for _ in range(BATCH_SIZE)])
                         if err:
                             st.caption(err)
                         break
-            st.success(f"Bank ready ✅ Added {added_total} AI questions to {topic} ({difficulty}).")
+            st.success(f"Done ✅ Added {added_total} AI questions to shared bank for {topic} ({difficulty}).")
 
-        # ✅ NEW: Generate 100 questions for every domain (one call per domain)
         if st.button(f"🚀 Generate {ALL_DOMAINS_TARGET} questions for EVERY domain ({difficulty})"):
             total_added = 0
             failures = 0
             with st.spinner(f"Generating {ALL_DOMAINS_TARGET} per domain for {difficulty}..."):
                 for dom in DOMAINS:
-                    q_dom = get_queue(dom, difficulty)
                     qs, err = fetch_questions_from_gemini(dom, difficulty, ALL_DOMAINS_BATCH_SIZE)
                     if qs:
-                        q_dom.extend(qs)
+                        add_to_bank(dom, difficulty, qs)
                         total_added += len(qs)
                     else:
                         failures += 1
-                        # Fill that domain with fallback so it's still usable
-                        q_dom.extend(random.choice(FALLBACK_QUESTIONS) for _ in range(ALL_DOMAINS_BATCH_SIZE))
+                        add_to_bank(dom, difficulty, [random.choice(FALLBACK_QUESTIONS) for _ in range(ALL_DOMAINS_BATCH_SIZE)])
                         if err:
                             st.caption(f"{dom}: {err}")
 
@@ -452,15 +461,9 @@ with st.sidebar.expander("🔒 Teacher Panel"):
         scores = load_scores(limit=200)
         if scores:
             st.dataframe(scores, use_container_width=True, height=220)
-
             with FILE_LOCK:
                 csv_bytes = open(SCORES_FILE, "rb").read()
-            st.download_button(
-                "⬇️ Download scores.csv",
-                data=csv_bytes,
-                file_name="scores.csv",
-                mime="text/csv"
-            )
+            st.download_button("⬇️ Download scores.csv", data=csv_bytes, file_name="scores.csv", mime="text/csv")
         else:
             st.info("No saved scores yet.")
 
@@ -473,7 +476,7 @@ with st.sidebar.expander("🔒 Teacher Panel"):
             st.caption("Clearing removes all saved scores on the server.")
 
 # =================================================
-# MAIN: Gemini status messages (if any)
+# MAIN: GEMINI STATUS
 # =================================================
 err = st.session_state.gemini_error
 if err:
@@ -481,14 +484,14 @@ if err:
     if t == "invalid":
         st.warning("Gemini key invalid (teacher calls will fail). Students can still use fallback questions.")
     elif t == "daily_quota":
-        st.warning("Gemini daily quota reached (teacher calls will fail today). Students can still use fallback questions.")
+        st.warning("Gemini daily quota reached (teacher calls will fail today). Students can still practice with fallback.")
     elif t == "rate_limit":
         st.warning("Gemini rate-limited. Try again later.")
     else:
-        st.warning("Gemini error. Teacher calls may fail. Students can still practice on fallback questions.")
+        st.warning("Gemini error. Teacher calls may fail. Students can still practice with fallback.")
 
 # =================================================
-# STUDENT: Save score
+# STUDENT: SAVE SCORE
 # =================================================
 st.markdown("### Save your score")
 save_disabled = (st.session_state.total_answered == 0) or (st.session_state.student_name.strip() == "")
@@ -509,22 +512,45 @@ elif st.session_state.total_answered == 0:
 st.divider()
 
 # =================================================
-# NEXT QUESTION (student-safe, per-domain)
+# STUDENT: GET NEXT QUESTION FROM SHARED BANK (NO REFILL NEEDED)
 # =================================================
 now = time.time()
 cooldown = int(max(0, st.session_state.next_allowed_time - now))
 if cooldown > 0:
     st.caption(f"Cooldown: {cooldown}s")
 
+def pick_question_from_shared_bank(topic: str, difficulty: str):
+    """Choose a question from the shared bank WITHOUT removing it, avoiding repeats per student."""
+    bank = get_bank_list(topic, difficulty)
+
+    # If no shared bank, fallback
+    if len(bank) == 0:
+        return random.choice(FALLBACK_QUESTIONS)
+
+    key = (topic, difficulty)
+    seen = st.session_state.seen_by_domain.setdefault(key, set())
+
+    # If student has seen everything, reset their seen set
+    if len(seen) >= len(bank):
+        seen.clear()
+
+    # pick an unseen index
+    attempts = 0
+    while attempts < 50:
+        idx = random.randrange(len(bank))
+        if idx not in seen:
+            seen.add(idx)
+            return bank[idx]
+        attempts += 1
+
+    # fallback if too many collisions
+    return random.choice(bank)
+
 if st.button("Next Question", disabled=cooldown > 0):
     st.session_state.next_allowed_time = time.time() + COOLDOWN_SECONDS
-
-    ensure_queue_student_safe(topic, difficulty)
-    current_queue = get_queue(topic, difficulty)
-
-    st.session_state.question = current_queue.pop(0)
+    st.session_state.question = pick_question_from_shared_bank(topic, difficulty)
     st.session_state.answered = False
-    st.session_state.answer_choice = None  # reset selection each new question
+    st.session_state.answer_choice = None
 
 # =================================================
 # DISPLAY QUESTION
