@@ -48,7 +48,7 @@ TEACHER_PIN = (
 # SETTINGS
 # =================================================
 MODEL = "gemini-2.5-flash"
-BATCH_SIZE = 200
+BATCH_SIZE = 100
 BANK_TARGET = 1000
 BANK_CALLS = max(1, BANK_TARGET // BATCH_SIZE)
 
@@ -590,4 +590,5 @@ if q:
             st.info(q["explanation"])
 else:
     st.info("Click **Next Question** to start.")
+
 
