@@ -103,16 +103,16 @@ DOMAINS = [
     "6. Modules (Math/Random/Sys)",
     "7. Perform and analyze data and data type operations",
     "8. Math/Datetime/Random Functions (fabs, ceil, floor, trunc, fmod, frexp, nan, isnan, sqrt, isqrt, pow, pi | now, strftime, weekday | randrange, randint, random, shuffle, choice, sample)",
-    "10. try, except, else, finally, raise",
-    "11. Read input from console, print formatted text (string.format(), f-strings), use command-line arguments",
-    "12. Unittest + assert methods (assertIsInstance, assertEqual, assertTrue, assertIs, assertIn)",
-    "13. io/os/os.path/sys (files + existence + sys.argv)",
-    "14. Call signatures, defaults, return, def, pass",
-    "15. Console input/output + formatting + command-line args",
-    "16. Loops: while/for + break/continue/pass + nested + compound conditions",
-    "17. Data conversion + indexing/slicing + list operations",
-    "18. Construct data structures: sets, tuples, dictionaries",
-    "19. Identity operator (is, is not)",
+    "9. try, except, else, finally, raise",
+    "10. Read input from console, print formatted text (string.format(), f-strings), use command-line arguments",
+    "11. Unittest + assert methods (assertIsInstance, assertEqual, assertTrue, assertIs, assertIn)",
+    "12. io/os/os.path/sys (files + existence + sys.argv)",
+    "13. Call signatures, defaults, return, def, pass",
+    "14. Console input/output + formatting + command-line args",
+    "15. Loops: while/for + break/continue/pass + nested + compound conditions",
+    "16. Data conversion + indexing/slicing + list operations",
+    "17. Construct data structures: sets, tuples, dictionaries",
+    "18. Identity operator (is, is not)",
 ]
 
 # =================================================
@@ -590,5 +590,6 @@ if q:
             st.info(q["explanation"])
 else:
     st.info("Click **Next Question** to start.")
+
 
 
