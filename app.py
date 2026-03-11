@@ -49,7 +49,7 @@ TEACHER_PIN = (
 # =================================================
 MODEL = "gemini-2.5-flash"
 
-BATCH_SIZE = 200                  # per refill call for selected domain
+BATCH_SIZE = 100                 # per refill call for selected domain
 BANK_TARGET = 1000                # per bank build for selected domain
 BANK_CALLS = BANK_TARGET // BATCH_SIZE  # 5
 
@@ -564,3 +564,4 @@ if q:
             st.info(q["explanation"])
 else:
     st.info("Click **Next Question** to start.")
+
