@@ -1923,22 +1923,21 @@ if st.session_state.is_teacher:
     if st.session_state.pop("create_student_form_cleared", False):
         st.success("Student created successfully.")
 
-    with st.form("create_student_form"):
+    with st.form("create_student_form", clear_on_submit=True):
         sm1, sm2 = st.columns(2)
 
         with sm1:
-            new_student_email = st.text_input("Student Email", key="create_student_email")
-            new_student_password = st.text_input("Temporary Password", type="password", key="create_student_password")
-            new_first_name = st.text_input("First Name", key="create_student_first_name")
+            new_student_email = st.text_input("Student Email")
+            new_student_password = st.text_input("Temporary Password", type="password")
+            new_first_name = st.text_input("First Name")
 
         with sm2:
-            new_student_id = st.text_input("Student ID", key="create_student_id")
+            new_student_id = st.text_input("Student ID")
             new_period = st.selectbox(
                 "Period",
-                ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"],
-                key="teacher_student_period_create_select"
+                ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"]
             )
-            new_active = st.checkbox("Active", value=True, key="create_student_active")
+            new_active = st.checkbox("Active", value=True)
 
         create_student_submit = st.form_submit_button("Create Student")
 
@@ -1952,21 +1951,8 @@ if st.session_state.is_teacher:
                 period=new_period,
                 active=new_active,
             )
-
-            for key in [
-                "create_student_email",
-                "create_student_password",
-                "create_student_first_name",
-                "create_student_id",
-                "teacher_student_period_create_select",
-                "create_student_active",
-            ]:
-                if key in st.session_state:
-                    del st.session_state[key]
-
             st.session_state["create_student_form_cleared"] = True
             st.rerun()
-
         except Exception as e:
             st.error(str(e))
 
