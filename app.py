@@ -151,22 +151,22 @@ FALLBACK_QUESTIONS = [
         "explanation": "`3.14` is a floating-point number, so its type name is `float`."
     },
     {
-        "question": "Which keyword is used to define a function in Python?",
-        "A": "`function`",
-        "B": "`def`",
-        "C": "`func`",
-        "D": "`lambda`",
-        "correct": "B",
-        "explanation": "Python functions are defined using the `def` keyword."
+        "question": "Python uses indentation to define code blocks.",
+        "A": "True",
+        "B": "False",
+        "C": "Not used",
+        "D": "Not used",
+        "correct": "A",
+        "explanation": "Indentation is required in Python and defines code blocks."
     },
     {
-        "question": "What does this code print? `print([1, 2, 3][-1])`",
-        "A": "`1`",
-        "B": "`2`",
-        "C": "`3`",
-        "D": "Error",
-        "correct": "C",
-        "explanation": "Index `-1` selects the last item in the list, which is `3`."
+        "question": "Put these list operations in the correct order to create a list and print its first item.",
+        "A": "Create list → access index 0 → print value",
+        "B": "Print value → create list → access index 0",
+        "C": "Access index 0 → create list → print value",
+        "D": "Create list → print value → access index 0",
+        "correct": "A",
+        "explanation": "You create the list first, access the first item, then print it."
     },
 ]
 
@@ -910,19 +910,53 @@ def parse_batch(raw: str):
 def fetch_questions_from_gemini(topic: str, difficulty: str, count: int):
     prompt = f"""
 You are a Python certification exam writer.
-Create exactly {count} multiple choice questions.
+Create exactly {count} questions for a classroom quiz game.
 
 DOMAIN: {topic}
 DIFFICULTY: {difficulty}
 
-Requirements:
+IMPORTANT:
+- Mix the question styles across the batch.
+- Use these 3 styles:
+  1. Standard multiple choice
+  2. True/False
+  3. Ordering-as-multiple-choice
+
+QUESTION STYLE RULES:
+- At least some questions should be standard MCQ.
+- At least some questions should be True/False.
+- At least some questions should be ordering questions written as MCQ choices.
+- Do NOT use drag-and-drop.
+- Do NOT require free response.
+- Every question must still fit this exact answer model:
+  A, B, C, or D
+
+CONTENT RULES:
 - Focus strictly on this Python domain.
-- Use Python certification-style multiple choice questions.
+- Use Python certification-style questions.
 - Include short Python code snippets when helpful.
-- Ask about syntax, output, logic, debugging, and concepts.
+- Ask about syntax, output, logic, debugging, tracing, and concepts.
 - Use realistic distractors.
-- Return only multiple-choice questions.
 - Use backticks around code when useful.
+
+TRUE/FALSE RULES:
+- For True/False questions, still format the answers as:
+  A) True
+  B) False
+  C) Not used
+  D) Not used
+- Correct answer must be A or B only.
+
+ORDERING RULES:
+- For ordering questions, ask students to choose the correct sequence.
+- Example style:
+  QUESTION: Put the following steps in the correct order...
+  A) 1, 2, 3, 4
+  B) 1, 3, 2, 4
+  C) 2, 1, 3, 4
+  D) 3, 1, 2, 4
+- Do NOT ask students to manually rearrange items.
+- Ordering questions must still be answerable with A/B/C/D.
 
 FORMAT (MUST MATCH EXACTLY):
 - Each question separated by a line containing ONLY: ###
