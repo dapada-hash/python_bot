@@ -701,6 +701,18 @@ def set_student_profile_active(uid: str, active: bool):
     mark_db_data_stale()
 
 
+def delete_student_profile_and_auth(uid: str):
+    uid = str(uid).strip()
+    if not uid:
+        raise ValueError("UID is required.")
+
+    db().collection("student_profiles").document(uid).delete()
+    firebase_auth.delete_user(uid)
+
+    clear_db_caches()
+    mark_db_data_stale()
+
+
 # =================================================
 # FIRESTORE WRITE HELPERS
 # =================================================
@@ -1260,6 +1272,7 @@ st.session_state.setdefault("auth_refresh_token", "")
 
 st.session_state.setdefault("shown_result_challenge_ids", [])
 st.session_state.setdefault("latest_result_checked_at", 0)
+st.session_state.setdefault("create_student_form_cleared", False)
 
 # =================================================
 # RESTORE AUTH FROM COOKIE FIRST
@@ -1873,28 +1886,31 @@ if st.session_state.is_teacher:
 
     st.markdown("### 👩‍🏫 Student Manager")
 
+    if st.session_state.pop("create_student_form_cleared", False):
+        st.success("Student created successfully.")
+
     with st.form("create_student_form"):
         sm1, sm2 = st.columns(2)
 
         with sm1:
-            new_student_email = st.text_input("Student Email")
-            new_student_password = st.text_input("Temporary Password", type="password")
-            new_first_name = st.text_input("First Name")
+            new_student_email = st.text_input("Student Email", key="create_student_email")
+            new_student_password = st.text_input("Temporary Password", type="password", key="create_student_password")
+            new_first_name = st.text_input("First Name", key="create_student_first_name")
 
         with sm2:
-            new_student_id = st.text_input("Student ID")
+            new_student_id = st.text_input("Student ID", key="create_student_id")
             new_period = st.selectbox(
                 "Period",
                 ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"],
                 key="teacher_student_period_create_select"
             )
-            new_active = st.checkbox("Active", value=True)
+            new_active = st.checkbox("Active", value=True, key="create_student_active")
 
         create_student_submit = st.form_submit_button("Create Student")
 
     if create_student_submit:
         try:
-            created = create_student_account_and_profile(
+            create_student_account_and_profile(
                 email=new_student_email,
                 password=new_student_password,
                 first_name=new_first_name,
@@ -1902,7 +1918,21 @@ if st.session_state.is_teacher:
                 period=new_period,
                 active=new_active,
             )
-            st.success(f"Student created successfully: {created['display_name']} | UID: {created['uid']}")
+
+            for key in [
+                "create_student_email",
+                "create_student_password",
+                "create_student_first_name",
+                "create_student_id",
+                "teacher_student_period_create_select",
+                "create_student_active",
+            ]:
+                if key in st.session_state:
+                    del st.session_state[key]
+
+            st.session_state["create_student_form_cleared"] = True
+            st.rerun()
+
         except Exception as e:
             st.error(str(e))
 
@@ -1947,8 +1977,14 @@ if st.session_state.is_teacher:
                 es1, es2 = st.columns(2)
 
                 with es1:
-                    edit_first_name = st.text_input("Edit First Name", value=selected_student.get("first_name", ""))
-                    edit_student_id = st.text_input("Edit Student ID", value=str(selected_student.get("student_id", "")))
+                    edit_first_name = st.text_input(
+                        "Edit First Name",
+                        value=selected_student.get("first_name", "")
+                    )
+                    edit_student_id = st.text_input(
+                        "Edit Student ID",
+                        value=str(selected_student.get("student_id", ""))
+                    )
 
                 with es2:
                     edit_period_options = ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"]
@@ -1960,14 +1996,19 @@ if st.session_state.is_teacher:
                         else 0,
                         key="teacher_student_period_edit_select"
                     )
-                    edit_active = st.checkbox("Edit Active", value=bool(selected_student.get("active", True)))
+                    edit_active = st.checkbox(
+                        "Edit Active",
+                        value=bool(selected_student.get("active", True))
+                    )
 
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
                 with c1:
                     update_student_submit = st.form_submit_button("Update Student")
                 with c2:
                     deactivate_label = "Deactivate Student" if bool(selected_student.get("active", True)) else "Activate Student"
                     toggle_active_submit = st.form_submit_button(deactivate_label)
+                with c3:
+                    delete_student_submit = st.form_submit_button("Delete Student")
 
             if update_student_submit:
                 try:
@@ -1990,6 +2031,14 @@ if st.session_state.is_teacher:
                         active=not bool(selected_student.get("active", True))
                     )
                     st.success("Student active status updated.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+            if delete_student_submit:
+                try:
+                    delete_student_profile_and_auth(selected_student.get("uid", ""))
+                    st.success("Student deleted successfully.")
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
