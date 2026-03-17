@@ -1261,6 +1261,14 @@ st.session_state.setdefault("auth_refresh_token", "")
 st.session_state.setdefault("shown_result_challenge_ids", [])
 st.session_state.setdefault("latest_result_checked_at", 0)
 
+# create-student form defaults
+st.session_state.setdefault("create_student_email", "")
+st.session_state.setdefault("create_student_password", "")
+st.session_state.setdefault("create_student_first_name", "")
+st.session_state.setdefault("create_student_id", "")
+st.session_state.setdefault("teacher_student_period_create_select", "Period 1")
+st.session_state.setdefault("create_student_active", True)
+
 # =================================================
 # RESTORE AUTH FROM COOKIE FIRST
 # =================================================
@@ -1877,18 +1885,18 @@ if st.session_state.is_teacher:
         sm1, sm2 = st.columns(2)
 
         with sm1:
-            new_student_email = st.text_input("Student Email")
-            new_student_password = st.text_input("Temporary Password", type="password")
-            new_first_name = st.text_input("First Name")
+            new_student_email = st.text_input("Student Email", key="create_student_email")
+            new_student_password = st.text_input("Temporary Password", type="password", key="create_student_password")
+            new_first_name = st.text_input("First Name", key="create_student_first_name")
 
         with sm2:
-            new_student_id = st.text_input("Student ID")
+            new_student_id = st.text_input("Student ID", key="create_student_id")
             new_period = st.selectbox(
                 "Period",
                 ["Period 1", "Period 2", "Period 3", "Period 4", "Period 5", "Period 6", "Other"],
                 key="teacher_student_period_create_select"
             )
-            new_active = st.checkbox("Active", value=True)
+            new_active = st.checkbox("Active", value=True, key="create_student_active")
 
         create_student_submit = st.form_submit_button("Create Student")
 
@@ -1902,7 +1910,18 @@ if st.session_state.is_teacher:
                 period=new_period,
                 active=new_active,
             )
+
             st.success(f"Student created successfully: {created['display_name']} | UID: {created['uid']}")
+
+            st.session_state["create_student_email"] = ""
+            st.session_state["create_student_password"] = ""
+            st.session_state["create_student_first_name"] = ""
+            st.session_state["create_student_id"] = ""
+            st.session_state["teacher_student_period_create_select"] = "Period 1"
+            st.session_state["create_student_active"] = True
+
+            st.rerun()
+
         except Exception as e:
             st.error(str(e))
 
