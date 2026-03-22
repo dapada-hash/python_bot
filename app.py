@@ -427,6 +427,48 @@ def firestore_enabled():
 
 
 # =================================================
+# FIRESTORE QUESTION BANK
+# =================================================
+def bank_doc_id(topic: str, difficulty: str) -> str:
+    raw = f"{topic}__{difficulty}"
+    return re.sub(r"[^A-Za-z0-9_\-]+", "_", raw).strip("_")
+
+
+def question_bank_ref(topic: str, difficulty: str):
+    return db().collection("question_banks").document(bank_doc_id(topic, difficulty))
+
+
+@st.cache_data(ttl=60)
+def load_bank_from_firestore(topic: str, difficulty: str):
+    snap = question_bank_ref(topic, difficulty).get()
+    if not snap.exists:
+        return {"questions": [], "updated": None}
+
+    data = snap.to_dict() or {}
+    questions = data.get("questions", []) or []
+    updated = data.get("updated_utc", None)
+    return {"questions": questions, "updated": updated}
+
+
+def save_bank_to_firestore(topic: str, difficulty: str, questions: list):
+    question_bank_ref(topic, difficulty).set({
+        "topic": topic,
+        "difficulty": difficulty,
+        "questions": questions,
+        "count": len(questions),
+        "updated_utc": now_utc(),
+    }, merge=True)
+    load_bank_from_firestore.clear()
+
+
+def append_questions_to_firestore_bank(topic: str, difficulty: str, new_questions: list):
+    current = load_bank_from_firestore(topic, difficulty)
+    existing_questions = current.get("questions", []) or []
+    combined = existing_questions + list(new_questions)
+    save_bank_to_firestore(topic, difficulty, combined)
+
+
+# =================================================
 # AUTH
 # =================================================
 def firebase_sign_in_email_password(email: str, password: str):
@@ -639,6 +681,7 @@ def clear_db_caches():
     load_challenge_events.clear()
     load_sessions.clear()
     load_student_profiles.clear()
+    load_bank_from_firestore.clear()
 
 
 def mark_db_data_stale():
@@ -1236,41 +1279,25 @@ def check_and_show_finished_event_result(events: list, player_id: str, student_p
 
 
 # =================================================
-# SHARED QUESTION BANK - PER DOMAIN
+# QUESTION BANK API
 # =================================================
-@st.cache_resource
-def get_shared_bank():
-    return {"lock": threading.Lock(), "bank": {}, "updated": {}}
-
-
-QB = get_shared_bank()
-
-
-def qkey(topic: str, difficulty: str):
-    return (topic, difficulty)
-
-
 def bank_size(topic: str, difficulty: str) -> int:
-    with QB["lock"]:
-        return len(QB["bank"].get(qkey(topic, difficulty), []))
+    data = load_bank_from_firestore(topic, difficulty)
+    return len(data.get("questions", []) or [])
 
 
 def bank_last_updated(topic: str, difficulty: str):
-    with QB["lock"]:
-        return QB["updated"].get(qkey(topic, difficulty))
+    data = load_bank_from_firestore(topic, difficulty)
+    return data.get("updated", None)
 
 
 def add_to_bank(topic: str, difficulty: str, questions: list):
-    with QB["lock"]:
-        QB["bank"].setdefault(qkey(topic, difficulty), [])
-        QB["bank"][qkey(topic, difficulty)].extend(questions)
-        QB["updated"][qkey(topic, difficulty)] = now_utc()
+    append_questions_to_firestore_bank(topic, difficulty, questions)
 
 
 def get_bank(topic: str, difficulty: str):
-    with QB["lock"]:
-        QB["bank"].setdefault(qkey(topic, difficulty), [])
-        return QB["bank"][qkey(topic, difficulty)]
+    data = load_bank_from_firestore(topic, difficulty)
+    return data.get("questions", []) or []
 
 
 # =================================================
