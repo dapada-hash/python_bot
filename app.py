@@ -2884,14 +2884,11 @@ if cooldown > 0:
     st.caption(f"Cooldown: {cooldown}s")
 
 if not any_quiz_mode_running():
-    if st.button(
+    st.button(
         "Next Question",
-        disabled=cooldown > 0 or st.session_state.submit_locked or st.session_state.processing_submission,
+        disabled=True,
         key="next_question_btn"
-    ):
-        st.session_state.last_feedback_text = ""
-        st.session_state.last_feedback_kind = "info"
-        load_question(active_topic, active_diff)
+    )
 
 q = st.session_state.get("question")
 if not q:
